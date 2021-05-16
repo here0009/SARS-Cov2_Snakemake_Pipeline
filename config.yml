@@ -1,0 +1,8 @@
+# [general]
+# aligner = bwa
+
+GENOME: /home/dlf/Code/SnakeMake/artic_ncov2019/ref/nCoV-2019/V3/nCoV-2019.reference.fasta
+FASTQ_DIR: /media/dlf/Learning/Code/NGS/SARSCoV2/SRA
+SAMPLE_SHEET: /home/dlf/Code/SnakeMake/artic_ncov2019/test_data/samplesheet.tsv
+VCF_QUAL_FILTER: 32
+OUT_DIR: ./results
