@@ -4,7 +4,15 @@ configfile: "config.yml"
 from glob import glob 
 import re
 import os
+def get_final_output():
+    final_output = []
+    final_output.extend(expand("bams/{sample}.bam", sample=SAMPLES)),
+    final_output.extend(expand("qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2])),
+    # final_output.extend(expand("trimmed/{sample}_{pair}_val_{pair}.fq.gz", sample=SAMPLES, pair=[1,2]))
+    final_output.extend(expand("mapped/{sample}.primertrimmed.sorted.bam", sample=SAMPLES))
+    
 
+    return final_output
 
 # Global variable 
 GENOME = config["GENOME"]
@@ -12,7 +20,8 @@ GENOME_BWA_INDEX = GENOME + ".bwt"
 GENOME_FAI_INDEX = GENOME + ".fai"
 GENOME_NAME="NC_045512.2"
 OUT_DIR = config["OUT_DIR"]
-
+PRIMER_DIR = config["PRIMER_DIR"]
+PRIMER_BED = os.path.join(PRIMER_DIR, "nCoV-2019.primer.bed")
 # Get samples names from fastq 
 FASTQ_DIR= config["FASTQ_DIR"]
 
@@ -26,37 +35,50 @@ print(SAMPLES)
 # ["bams/{}.bam".format(sample) for sample in SAMPLES]
 # ["qc/fastqc/" + sample +".html" for sample in SAMPLES]
 # rules.fastqc.output.html
-
+# [f"qc/fastqc/{sample}_1_fastqc.html" for sample in SAMPLES],
+# [f"qc/fastqc/{sample}_2_fastqc.html" for sample in SAMPLES]
+# html1="qc/fastqc/{sample}_1_fastqc.html",
+# zip1="qc/fastqc/{sample}_1_fastqc.zip",
+# html2="qc/fastqc/{sample}_2_fastqc.html",
+# zip2="qc/fastqc/{sample}_2_fastqc.zip",
 
 rule root:
     input:
-        [f"bams/{sample}.bam" for sample in SAMPLES],
-        [f"qc/fastqc/{sample}_1_fastqc.html" for sample in SAMPLES],
-        [f"qc/fastqc/{sample}_2_fastqc.html" for sample in SAMPLES]
-        
+        get_final_output()
 
-        
 
 rule fastqc:
     conda: 
-        "envs/illumina/environment.yml"
+        "envs/illumina/environment.yml",
     input:
         R1=FASTQ_DIR + "/{sample}_1.fastq.gz",
-        R2=FASTQ_DIR + "/{sample}_2.fastq.gz"
+        R2=FASTQ_DIR + "/{sample}_2.fastq.gz",
     output:
-        html1="qc/fastqc/{sample}_1_fastqc.html",
-        zip1="qc/fastqc/{sample}_1_fastqc.zip",
-        html2="qc/fastqc/{sample}_2_fastqc.html",
-        zip2="qc/fastqc/{sample}_2_fastqc.zip",
-
+        "qc/fastqc/{sample}_1_fastqc.html",
+        "qc/fastqc/{sample}_2_fastqc.html",
     log:
-        "logs/fastqc/{sample}.log"
+        "logs/fastqc/{sample}.log",
     shell:
         """
         fastqc -o qc/fastqc/ -f fastq -q {input.R1} {input.R2}
         """  
 
-# zip="qc/fastqc/{sample}_1_fastqc.zip"
+rule readTrimming:
+    conda: 
+        "envs/illumina/environment.yml",
+
+    input:
+        R1=FASTQ_DIR + "/{sample}_1.fastq.gz",
+        R2=FASTQ_DIR + "/{sample}_2.fastq.gz",
+
+    output:
+        "trimmed/{sample}_1_val_1.fq.gz", 
+        "trimmed/{sample}_2_val_2.fq.gz",
+    log:
+        "logs/trimmed/{sample}_1.log",
+        "logs/trimmed/{sample}_2.log",
+    shell:
+        "trim_galore --paired {input.R1} {input.R2} -o trimmed"
 
 
 rule index_genome:
@@ -72,8 +94,8 @@ rule index_genome:
 rule bwa_align:
     conda: "envs/illumina/environment.yml"
     input:
-        R1=FASTQ_DIR + "/{sample}_1.fastq.gz",
-        R2=FASTQ_DIR + "/{sample}_2.fastq.gz",
+        R1="trimmed/{sample}_1_val_1.fq.gz",
+        R2="trimmed/{sample}_2_val_2.fq.gz",
         index=GENOME_BWA_INDEX
 
     output:
@@ -93,9 +115,8 @@ rule sam2bam:
     output:
         "bams/{sample}.bam"
     shell:
-        """
-        samtools sort -O BAM {input} > {output}
-        """
+        "samtools sort -O BAM {input} > {output}"
+
 
 rule samIndex:
     conda: "envs/illumina/environment.yml"
@@ -105,6 +126,38 @@ rule samIndex:
         "bams/{sample}.bam.bai"
     shell:
         "samtools index {input}"
+
+
+rule trimPrimerSequences:
+    conda: 
+        "envs/illumina/environment.yml",
+    input:
+        bam="bams/{sample}.bam",
+        bai="bams/{sample}.bam.bai",
+        bedfile=PRIMER_BED
+
+    output:
+        mapped="mapped/{sample}.mapped.bam",
+        ptrim="mapped/{sample}.primertrimmed.sorted.bam",
+
+    log:
+        "logs/primer_trime/{sample}_trimPrimerSequences.log",
+
+    params:
+        ivarCmd = "ivar trim -e" if config["allowNoprimer"] else "ivar trim",
+        illuminaKeepLen = config["illuminaKeepLen"],
+        illuminaQualThreshold = config["illuminaQualThreshold"],
+        cleanBamHeader = config["cleanBamHeader"]
+
+    shell:
+        """
+        samtools view -F4 -o {output.mapped} {input.bam}
+        samtools index {output.mapped}
+        {params.ivarCmd} -i {output.mapped} -b {input.bedfile} -m {params.illuminaKeepLen} -q {params.illuminaQualThreshold} -p ivar_{wildcards.sample} > {log}
+        samtools sort -o {output.ptrim} ivar_{wildcards.sample}.bam
+        """
+
+
 
 
 # rule vcf:
