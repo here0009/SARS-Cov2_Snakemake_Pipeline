@@ -4,12 +4,16 @@ configfile: "config.yml"
 from glob import glob 
 import re
 import os
+# include "rules/illumina.smk"
+# include "rules/qc.smk"
+
 def get_final_output():
     final_output = []
-    final_output.extend(expand("bams/{sample}.bam", sample=SAMPLES)),
     final_output.extend(expand("qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2])),
-    # final_output.extend(expand("trimmed/{sample}_{pair}_val_{pair}.fq.gz", sample=SAMPLES, pair=[1,2]))
-    final_output.extend(expand("mapped/{sample}.primertrimmed.sorted.bam", sample=SAMPLES))
+    final_output.extend(expand("mapped/{sample}.primertrimmed.sorted.bam", sample=SAMPLES)),
+    final_output.extend(expand("variants/{sample}.variants.tsv", sample=SAMPLES)),
+    # final_output.extend(expand("consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES))
+    # final_output.extend()
     
 
     return final_output
@@ -28,23 +32,12 @@ FASTQ_DIR= config["FASTQ_DIR"]
 SAMPLES = [re.search(FASTQ_DIR+r"/(.+)_1.fastq.gz",i).group(1) for i in glob(os.path.join(FASTQ_DIR,"*_1.fastq.gz"))]
 
 print(SAMPLES)
-# rule all:
-#     input:
-#         all
-# ["bams/"+ sample +".bam" for sample in SAMPLES],
-# ["bams/{}.bam".format(sample) for sample in SAMPLES]
-# ["qc/fastqc/" + sample +".html" for sample in SAMPLES]
-# rules.fastqc.output.html
-# [f"qc/fastqc/{sample}_1_fastqc.html" for sample in SAMPLES],
-# [f"qc/fastqc/{sample}_2_fastqc.html" for sample in SAMPLES]
-# html1="qc/fastqc/{sample}_1_fastqc.html",
-# zip1="qc/fastqc/{sample}_1_fastqc.zip",
-# html2="qc/fastqc/{sample}_2_fastqc.html",
-# zip2="qc/fastqc/{sample}_2_fastqc.zip",
+
 
 rule root:
     input:
-        get_final_output()
+        get_final_output(),
+        "annotation/pangolin_lineage_report.csv"
 
 
 rule fastqc:
@@ -148,16 +141,76 @@ rule trimPrimerSequences:
         illuminaKeepLen = config["illuminaKeepLen"],
         illuminaQualThreshold = config["illuminaQualThreshold"],
         cleanBamHeader = config["cleanBamHeader"]
+    
+    script:
+        "scripts/trimPrimerSequences.py"
+
+
+rule callVariants:
+    conda: 
+        "envs/illumina/environment.yml",
+
+    input:
+        bam="mapped/{sample}.primertrimmed.sorted.bam",
+        genome=GENOME
+
+    output:
+        "variants/{sample}.variants.tsv",
+
+    params:
+        ivarMinDepth=config["ivarMinDepth"],
+        ivarMinVariantQuality=config["ivarMinVariantQuality"],
+        ivarMinFreqThreshold=config["ivarMinFreqThreshold"]
 
     shell:
         """
-        samtools view -F4 -o {output.mapped} {input.bam}
-        samtools index {output.mapped}
-        {params.ivarCmd} -i {output.mapped} -b {input.bedfile} -m {params.illuminaKeepLen} -q {params.illuminaQualThreshold} -p ivar_{wildcards.sample} > {log}
-        samtools sort -o {output.ptrim} ivar_{wildcards.sample}.bam
+        samtools mpileup -A -d 0 --reference {input.genome} -B -Q 0 {input.bam} |\
+        ivar variants -r {input.genome} -m {params.ivarMinDepth} -p {wildcards.sample}.variants -q {params.ivarMinVariantQuality} -t {params.ivarMinFreqThreshold} 
+        mv  {wildcards.sample}.variants.tsv {output}
         """
 
+rule makeConsensus:
+    conda: 
+        "envs/illumina/environment.yml",
 
+    input:
+        bam="mapped/{sample}.primertrimmed.sorted.bam",
+
+    output:
+        fasta="consensus/{sample}.primertrimmed.consensus.fa",
+        quality="consensus/{sample}.primertrimmed.consensus.qual.txt"
+        # quallity=directory("consensus")
+    params:
+        mpileupDepth=config["mpileupDepth"],
+        ivarFreqThreshold=config["ivarFreqThreshold"],
+        ivarMinDepth=config["ivarMinDepth"],
+
+
+    shell:
+        """
+        samtools mpileup -aa -A -B -d {params.mpileupDepth} -Q0 {input.bam} | \
+        ivar consensus -t {params.ivarFreqThreshold} -m {params.ivarMinDepth} \
+        -n N -p {wildcards.sample}.primertrimmed.consensus.fa
+        mv {wildcards.sample}.primertrimmed.consensus.fa {output.fasta}
+        mv {wildcards.sample}.primertrimmed.consensus.qual.txt {output.quality}
+        """
+
+rule pangolin:
+    conda: 
+        "envs/illumina/environment.yml",
+    
+    input:
+        expand("consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES)
+    
+    output:
+        fasta="annotation/all_consensus_seqs.fa",
+        csv="annotation/pangolin_lineage_report.csv"
+
+    shell:
+        """
+        cat {input} > {output.fasta}
+        pangolin {output.fasta} --outfile {output.csv}
+        """
 
 
 # rule vcf:
