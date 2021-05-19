@@ -39,7 +39,8 @@ print(SAMPLES)
 rule root:
     input:
         get_final_output(),
-        OUT_DIR +"/annotation/pangolin_lineage_report.csv"
+        OUT_DIR +"/annotation/pangolin_lineage_report.csv",
+        OUT_DIR + "/qc/quast/report.txt"
 
 
 rule fastqc:
@@ -251,6 +252,34 @@ rule anno_CorGat:
         {params.annotate} --in {output.align} --conf {params.test_conf} --out {output.anno}
         """
 
+rule ivar_QUAST:
+    conda: 
+        "envs/illumina/environment.yml",
+
+    input:
+        fasta=expand("{out_dir}/consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES, out_dir=[OUT_DIR]),
+        # consensus=OUT_DIR +"/annotation/all_consensus_seqs.fa",
+        genome=GENOME,
+        
+
+    output:
+        out_dir=directory(OUT_DIR + "/qc/quast"),
+        txt=OUT_DIR + "/qc/quast/report.txt"
+
+    params:
+        features = f"--features {config['gff']}" if config['gff'] else ""
+
+    shell:
+        """
+        quast.py \\
+            --output-dir {output.out_dir} \\
+            -r {input.genome} \\
+            {params.features} \\
+            {input.fasta}
+        """
+# {input.consensus.join(' ')}
+# out_dir=OUT_DIR + "/qc/quast",
+# tsv=OUT_DIR + "/qc/quast/report.tsv"
 # rule vcf:
 #     input:
 #         "{sample}.bam", "{sample}.bam.bai", GENOME_FAI_INDEX
