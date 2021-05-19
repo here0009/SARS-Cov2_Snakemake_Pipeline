@@ -9,9 +9,9 @@ import os
 
 def get_final_output():
     final_output = []
-    final_output.extend(expand("qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2])),
-    final_output.extend(expand("mapped/{sample}.primertrimmed.sorted.bam", sample=SAMPLES)),
-    final_output.extend(expand("variants/{sample}.variants.tsv", sample=SAMPLES)),
+    final_output.extend(expand("{out_dir}/qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2], out_dir=[OUT_DIR])),
+    # final_output.extend(expand("{out_dir}/mapped/{sample}.primertrimmed.sorted.bam", sample=SAMPLES, out_dir=[OUT_DIR])),
+    final_output.extend(expand("{out_dir}/variants/{sample}.variants.tsv", sample=SAMPLES, out_dir=[OUT_DIR])),
     # final_output.extend(expand("consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES))
     # final_output.extend()
     
@@ -37,7 +37,7 @@ print(SAMPLES)
 rule root:
     input:
         get_final_output(),
-        "annotation/pangolin_lineage_report.csv"
+        OUT_DIR +"/annotation/pangolin_lineage_report.csv"
 
 
 rule fastqc:
@@ -47,13 +47,15 @@ rule fastqc:
         R1=FASTQ_DIR + "/{sample}_1.fastq.gz",
         R2=FASTQ_DIR + "/{sample}_2.fastq.gz",
     output:
-        "qc/fastqc/{sample}_1_fastqc.html",
-        "qc/fastqc/{sample}_2_fastqc.html",
+        html1=OUT_DIR + "/qc/fastqc/{sample}_1_fastqc.html",
+        html2=OUT_DIR +"/qc/fastqc/{sample}_2_fastqc.html",
     log:
-        "logs/fastqc/{sample}.log",
+        OUT_DIR +"/logs/fastqc/{sample}.log",
+    params:
+        out_dir=OUT_DIR + "/qc/fastqc/",
     shell:
         """
-        fastqc -o qc/fastqc/ -f fastq -q {input.R1} {input.R2}
+        fastqc -o {params.out_dir} -f fastq -q {input.R1} {input.R2}
         """  
 
 rule readTrimming:
@@ -65,13 +67,15 @@ rule readTrimming:
         R2=FASTQ_DIR + "/{sample}_2.fastq.gz",
 
     output:
-        "trimmed/{sample}_1_val_1.fq.gz", 
-        "trimmed/{sample}_2_val_2.fq.gz",
+        OUT_DIR +"/trimmed/{sample}_1_val_1.fq.gz",
+        OUT_DIR +"/trimmed/{sample}_2_val_2.fq.gz",
     log:
-        "logs/trimmed/{sample}_1.log",
-        "logs/trimmed/{sample}_2.log",
+        OUT_DIR +"/logs/trimmed/{sample}_1.log",
+        OUT_DIR +"/logs/trimmed/{sample}_2.log",
+    params:
+        out_dir=OUT_DIR +"/trimmed"
     shell:
-        "trim_galore --paired {input.R1} {input.R2} -o trimmed"
+        "trim_galore --paired {input.R1} {input.R2} -o {params.out_dir}"
 
 
 rule index_genome:
@@ -87,14 +91,14 @@ rule index_genome:
 rule bwa_align:
     conda: "envs/illumina/environment.yml"
     input:
-        R1="trimmed/{sample}_1_val_1.fq.gz",
-        R2="trimmed/{sample}_2_val_2.fq.gz",
+        R1=OUT_DIR +"/trimmed/{sample}_1_val_1.fq.gz",
+        R2=OUT_DIR +"/trimmed/{sample}_2_val_2.fq.gz",
         index=GENOME_BWA_INDEX
 
     output:
-        "mapped/{sample}.sam"
+        OUT_DIR +"/mapped/{sample}.sam"
     log:
-        "logs/mapped/{sample}.log"
+        OUT_DIR +"/logs/mapped/{sample}.log"
     params:
         genome = GENOME
     shell:
@@ -104,9 +108,9 @@ rule bwa_align:
 rule sam2bam:
     conda: "envs/illumina/environment.yml"
     input:
-        "mapped/{sample}.sam"
+        OUT_DIR +"/mapped/{sample}.sam"
     output:
-        "bams/{sample}.bam"
+        OUT_DIR +"/bams/{sample}.bam"
     shell:
         "samtools sort -O BAM {input} > {output}"
 
@@ -114,9 +118,9 @@ rule sam2bam:
 rule samIndex:
     conda: "envs/illumina/environment.yml"
     input:
-        "bams/{sample}.bam"
+        OUT_DIR +"/bams/{sample}.bam"
     output:
-        "bams/{sample}.bam.bai"
+        OUT_DIR +"/bams/{sample}.bam.bai"
     shell:
         "samtools index {input}"
 
@@ -125,13 +129,13 @@ rule trimPrimerSequences:
     conda: 
         "envs/illumina/environment.yml",
     input:
-        bam="bams/{sample}.bam",
-        bai="bams/{sample}.bam.bai",
+        bam=OUT_DIR +"/bams/{sample}.bam",
+        bai=OUT_DIR +"/bams/{sample}.bam.bai",
         bedfile=PRIMER_BED
 
     output:
-        mapped="mapped/{sample}.mapped.bam",
-        ptrim="mapped/{sample}.primertrimmed.sorted.bam",
+        mapped=OUT_DIR +"/mapped/{sample}.mapped.bam",
+        ptrim=OUT_DIR +"/mapped/{sample}.primertrimmed.sorted.bam",
 
     log:
         "logs/primer_trime/{sample}_trimPrimerSequences.log",
@@ -143,7 +147,7 @@ rule trimPrimerSequences:
         cleanBamHeader = config["cleanBamHeader"]
     
     script:
-        "scripts/trimPrimerSequences.py"
+        "bin/trimPrimerSequences.py"
 
 
 rule callVariants:
@@ -151,11 +155,11 @@ rule callVariants:
         "envs/illumina/environment.yml",
 
     input:
-        bam="mapped/{sample}.primertrimmed.sorted.bam",
+        bam=OUT_DIR +"/mapped/{sample}.primertrimmed.sorted.bam",
         genome=GENOME
 
     output:
-        "variants/{sample}.variants.tsv",
+        OUT_DIR +"/variants/{sample}.variants.tsv",
 
     params:
         ivarMinDepth=config["ivarMinDepth"],
@@ -174,11 +178,11 @@ rule makeConsensus:
         "envs/illumina/environment.yml",
 
     input:
-        bam="mapped/{sample}.primertrimmed.sorted.bam",
+        bam=OUT_DIR +"/mapped/{sample}.primertrimmed.sorted.bam",
 
     output:
-        fasta="consensus/{sample}.primertrimmed.consensus.fa",
-        quality="consensus/{sample}.primertrimmed.consensus.qual.txt"
+        fasta=OUT_DIR +"/consensus/{sample}.primertrimmed.consensus.fa",
+        quality=OUT_DIR +"/consensus/{sample}.primertrimmed.consensus.qual.txt"
         # quallity=directory("consensus")
     params:
         mpileupDepth=config["mpileupDepth"],
@@ -200,11 +204,11 @@ rule pangolin:
         "envs/illumina/environment.yml",
     
     input:
-        expand("consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES)
+        expand("{out_dir}/consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES, out_dir=[OUT_DIR])
     
     output:
-        fasta="annotation/all_consensus_seqs.fa",
-        csv="annotation/pangolin_lineage_report.csv"
+        fasta=OUT_DIR +"/annotation/all_consensus_seqs.fa",
+        csv=OUT_DIR +"/annotation/pangolin_lineage_report.csv"
 
     shell:
         """
@@ -212,6 +216,25 @@ rule pangolin:
         pangolin {output.fasta} --outfile {output.csv}
         """
 
+# process anno_CorGat{
+#     publishDir "${config.outdir}/${task.process.replaceAll(":","_")}", mode: 'copy'
+#     conda config.conda_path
+#     label 'error_ignore'
+#     input:
+#     tuple val(sampleName), path(consensus_seq) 
+    
+#     output:
+#     path "${sampleName}_align.csv"
+#     path "${sampleName}_anno.csv"
+
+     
+#     script:
+#     """
+#     awk -v path=${config.corgat_path} '{full_path=path\$2; print \$1,full_path}' ${config.corgat_conf} > test.conf
+#     align.pl --multi  $consensus_seq --refile $config.corgat_fna  --out ${sampleName}_align.csv
+#     annotate.pl --in ${sampleName}_align.csv --conf test.conf --out ${sampleName}_anno.csv
+#     """
+# }
 
 # rule vcf:
 #     input:
