@@ -4,6 +4,7 @@ configfile: "config.yml"
 from glob import glob 
 import re
 import os
+
 # include "rules/illumina.smk"
 # include "rules/qc.smk"
 
@@ -12,8 +13,9 @@ def get_final_output():
     final_output.extend(expand("{out_dir}/qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2], out_dir=[OUT_DIR])),
     # final_output.extend(expand("{out_dir}/mapped/{sample}.primertrimmed.sorted.bam", sample=SAMPLES, out_dir=[OUT_DIR])),
     final_output.extend(expand("{out_dir}/variants/{sample}.variants.tsv", sample=SAMPLES, out_dir=[OUT_DIR])),
-    # final_output.extend(expand("consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES))
+    final_output.extend(expand(OUT_DIR+"/annotation/{sample}_anno.csv", sample=SAMPLES))
     # final_output.extend()
+    
     
 
     return final_output
@@ -216,25 +218,38 @@ rule pangolin:
         pangolin {output.fasta} --outfile {output.csv}
         """
 
-# process anno_CorGat{
-#     publishDir "${config.outdir}/${task.process.replaceAll(":","_")}", mode: 'copy'
-#     conda config.conda_path
-#     label 'error_ignore'
-#     input:
-#     tuple val(sampleName), path(consensus_seq) 
+rule anno_CorGat:
+    conda: 
+        "envs/illumina/environment.yml",
+
+    # label 'error_ignore'
+    input:
+        consensus=OUT_DIR+"/consensus/{sample}.primertrimmed.consensus.fa"
+
+    output:
+        align=OUT_DIR+"/annotation/{sample}_align.csv",
+        anno=OUT_DIR+"/annotation/{sample}_anno.csv"
     
-#     output:
-#     path "${sampleName}_align.csv"
-#     path "${sampleName}_anno.csv"
+    params:
+        corgatPath=config['corgatPath']+'/',
+        corgatFna=config['corgatFna'],
+        corgatConf=config['corgatConf'],
+        test_conf=OUT_DIR+"/annotation/test.conf",
+        align=os.path.join(config['corgatPath'], 'align.pl'),
+        annotate=os.path.join(config['corgatPath'], 'annotate.pl'),
+        tmp=OUT_DIR+"/tmp/"
 
      
-#     script:
-#     """
-#     awk -v path=${config.corgat_path} '{full_path=path\$2; print \$1,full_path}' ${config.corgat_conf} > test.conf
-#     align.pl --multi  $consensus_seq --refile $config.corgat_fna  --out ${sampleName}_align.csv
-#     annotate.pl --in ${sampleName}_align.csv --conf test.conf --out ${sampleName}_anno.csv
-#     """
-# }
+    shell:
+        """
+        if [ ! -f {params.test_conf} ];then
+            awk -v path={params.corgatPath} '{{full_path=path$2; print $1,full_path}}' {params.corgatConf} > {params.test_conf}
+        fi
+        mkdir -p {params.tmp}{wildcards.sample}
+        cd {params.tmp}{wildcards.sample}
+        {params.align} --multi  {input.consensus} --refile {params.corgatFna}  --out {output.align}
+        {params.annotate} --in {output.align} --conf {params.test_conf} --out {output.anno}
+        """
 
 # rule vcf:
 #     input:
