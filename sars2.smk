@@ -5,15 +5,17 @@ from glob import glob
 import re
 import os
 
+
 # include "rules/illumina.smk"
 # include "rules/qc.smk"
 
 def get_final_output():
     final_output = []
     final_output.extend(expand("{out_dir}/qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2], out_dir=[OUT_DIR])),
-    # final_output.extend(expand("{out_dir}/mapped/{sample}.primertrimmed.sorted.bam", sample=SAMPLES, out_dir=[OUT_DIR])),
     final_output.extend(expand("{out_dir}/variants/{sample}.variants.tsv", sample=SAMPLES, out_dir=[OUT_DIR])),
-    final_output.extend(expand(OUT_DIR+"/annotation/{sample}_anno.csv", sample=SAMPLES))
+    final_output.extend(expand(OUT_DIR+"/annotation/{sample}_anno.csv", sample=SAMPLES)),
+    final_output.extend(expand("{out_dir}/qc/qc_plots/{sample}.depth.png", sample=SAMPLES,out_dir=[OUT_DIR]))
+
     # final_output.extend()
     
     
@@ -257,7 +259,7 @@ rule ivar_QUAST:
         "envs/illumina/environment.yml",
 
     input:
-        fasta=expand("{out_dir}/consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES, out_dir=[OUT_DIR]),
+        consensus=expand("{out_dir}/consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES, out_dir=[OUT_DIR]),
         # consensus=OUT_DIR +"/annotation/all_consensus_seqs.fa",
         genome=GENOME,
         
@@ -275,11 +277,34 @@ rule ivar_QUAST:
             --output-dir {output.out_dir} \\
             -r {input.genome} \\
             {params.features} \\
-            {input.fasta}
+            {input.consensus}
         """
-# {input.consensus.join(' ')}
-# out_dir=OUT_DIR + "/qc/quast",
-# tsv=OUT_DIR + "/qc/quast/report.tsv"
+
+
+rule makeQCCSV:
+    conda: 
+        "envs/illumina/environment.yml",
+
+    input:
+        bam=OUT_DIR +"/mapped/{sample}.primertrimmed.sorted.bam",
+        consensus=OUT_DIR+"/consensus/{sample}.primertrimmed.consensus.fa",
+        genome=GENOME
+
+
+    output:
+        csv=OUT_DIR +"/qc/qc_plots/{sample}.qc.csv",
+        png=OUT_DIR +"/qc/qc_plots/{sample}.depth.png"
+
+    params:
+        qcSetting = "--illumina" if config["illumina"] else "--nanopore"
+
+    shell:
+        """
+        ./bin/qc.py {params.qcSetting} --outfile {output.csv} --sample {wildcards.sample} --ref {input.genome} --bam {input.bam} --fasta {input.consensus}
+        mv {wildcards.sample}.depth.png {output.png}
+        """
+
+
 # rule vcf:
 #     input:
 #         "{sample}.bam", "{sample}.bam.bai", GENOME_FAI_INDEX
