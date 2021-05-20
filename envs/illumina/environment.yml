@@ -1,0 +1,23 @@
+name: artic-ncov2019-illumina
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3
+  - biopython
+  - libxcb
+  - matplotlib
+  - pandas
+  - bwa
+  - samtools
+  - bcftools
+  - trim-galore
+  - ivar
+  - pyvcf
+  - pyyaml
+  - pangolin
+  - quast
+  - mummer
+  - fastqc
+  - multiqc

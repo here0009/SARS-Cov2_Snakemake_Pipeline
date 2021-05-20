@@ -5,15 +5,9 @@ from glob import glob
 import re
 import os
 
-
-# include: "rules/illumina.smk"
-# include "rules/qc.smk"
-
 def get_final_output():
     final_output = []
     final_output.extend(expand(OUT_DIR+"/annotation/{sample}_anno.csv", sample=SAMPLES)),
-    
-
     return final_output
 
 # Global variable 
