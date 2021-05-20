@@ -14,7 +14,7 @@ corgatFna: /home/dlf/Code/SnakeMake/artic_ncov2019/CorGAT/GCF_009858895.2_ASM985
 corgatConf: /home/dlf/Code/SnakeMake/artic_ncov2019/CorGAT/corgat.conf
 # typing configuration
 gff: '/home/dlf/Code/SnakeMake/artic_ncov2019/typing/MN908947.3.gff'
-yaml: '/home/dlf/Code/SnakeMake/artic_ncov2019/typing/SARS-CoV-2.types.yaml'
+typing_yaml: '/home/dlf/Code/SnakeMake/artic_ncov2019/typing/SARS-CoV-2.types.yaml'
 # Output cram instead of bam files
 outCram: False
 

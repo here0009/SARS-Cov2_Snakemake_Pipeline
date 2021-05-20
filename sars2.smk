@@ -1,20 +1,20 @@
 configfile: "config.yml"
-
+include: "rules/anno.smk"
 
 from glob import glob 
 import re
 import os
 
 
-# include "rules/illumina.smk"
+# include: "rules/illumina.smk"
 # include "rules/qc.smk"
 
 def get_final_output():
     final_output = []
     final_output.extend(expand("{out_dir}/qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2], out_dir=[OUT_DIR])),
-    final_output.extend(expand("{out_dir}/variants/{sample}.variants.tsv", sample=SAMPLES, out_dir=[OUT_DIR])),
+    # final_output.extend(expand("{out_dir}/variants/{sample}.variants.tsv", sample=SAMPLES, out_dir=[OUT_DIR])),
     final_output.extend(expand(OUT_DIR+"/annotation/{sample}_anno.csv", sample=SAMPLES)),
-    final_output.extend(expand("{out_dir}/qc/qc_plots/{sample}.depth.png", sample=SAMPLES,out_dir=[OUT_DIR]))
+    # final_output.extend(expand("{out_dir}/qc/qc_plots/{sample}.depth.png", sample=SAMPLES,out_dir=[OUT_DIR]))
 
     # final_output.extend()
     
@@ -42,7 +42,10 @@ rule root:
     input:
         get_final_output(),
         OUT_DIR +"/annotation/pangolin_lineage_report.csv",
-        OUT_DIR + "/qc/quast/report.txt"
+        OUT_DIR + "/qc/quast/report.txt",
+        OUT_DIR +"/qc/qc_plots/total_qc.csv",
+        OUT_DIR + "/typing_summary.csv",
+        OUT_DIR + "/variant_summary.csv"
 
 
 rule fastqc:
@@ -204,56 +207,6 @@ rule makeConsensus:
         mv {wildcards.sample}.primertrimmed.consensus.qual.txt {output.quality}
         """
 
-rule pangolin:
-    conda: 
-        "envs/illumina/environment.yml",
-    
-    input:
-        expand("{out_dir}/consensus/{sample}.primertrimmed.consensus.fa", sample=SAMPLES, out_dir=[OUT_DIR])
-    
-    output:
-        fasta=OUT_DIR +"/annotation/all_consensus_seqs.fa",
-        csv=OUT_DIR +"/annotation/pangolin_lineage_report.csv"
-
-    shell:
-        """
-        cat {input} > {output.fasta}
-        pangolin {output.fasta} --outfile {output.csv}
-        """
-
-rule anno_CorGat:
-    conda: 
-        "envs/illumina/environment.yml",
-
-    # label 'error_ignore'
-    input:
-        consensus=OUT_DIR+"/consensus/{sample}.primertrimmed.consensus.fa"
-
-    output:
-        align=OUT_DIR+"/annotation/{sample}_align.csv",
-        anno=OUT_DIR+"/annotation/{sample}_anno.csv"
-    
-    params:
-        corgatPath=config['corgatPath']+'/',
-        corgatFna=config['corgatFna'],
-        corgatConf=config['corgatConf'],
-        test_conf=OUT_DIR+"/annotation/test.conf",
-        align=os.path.join(config['corgatPath'], 'align.pl'),
-        annotate=os.path.join(config['corgatPath'], 'annotate.pl'),
-        tmp=OUT_DIR+"/tmp/"
-
-     
-    shell:
-        """
-        if [ ! -f {params.test_conf} ];then
-            awk -v path={params.corgatPath} '{{full_path=path$2; print $1,full_path}}' {params.corgatConf} > {params.test_conf}
-        fi
-        mkdir -p {params.tmp}{wildcards.sample}
-        cd {params.tmp}{wildcards.sample}
-        {params.align} --multi  {input.consensus} --refile {params.corgatFna}  --out {output.align}
-        {params.annotate} --in {output.align} --conf {params.test_conf} --out {output.anno}
-        """
-
 rule ivar_QUAST:
     conda: 
         "envs/illumina/environment.yml",
@@ -293,7 +246,8 @@ rule makeQCCSV:
 
     output:
         csv=OUT_DIR +"/qc/qc_plots/{sample}.qc.csv",
-        png=OUT_DIR +"/qc/qc_plots/{sample}.depth.png"
+        png=OUT_DIR +"/qc/qc_plots/{sample}.depth.png",
+        
 
     params:
         qcSetting = "--illumina" if config["illumina"] else "--nanopore"
@@ -304,92 +258,68 @@ rule makeQCCSV:
         mv {wildcards.sample}.depth.png {output.png}
         """
 
+rule writeQCSummaryCSV:
+    conda: 
+        "envs/illumina/environment.yml",
+    input:
+        csv=expand("{out_dir}/qc/qc_plots/{sample}.qc.csv", sample=SAMPLES, out_dir=[OUT_DIR])
+    output:
+        total_qc=OUT_DIR +"/qc/qc_plots/total_qc.csv"
+    shell:
+        "awk '(NR == 1) || (FNR > 1)' {input.csv} > {output.total_qc}"
 
-# rule vcf:
-#     input:
-#         "{sample}.bam", "{sample}.bam.bai", GENOME_FAI_INDEX
-#     output:
-#         "{sample}.vcf"
-#     params:
-#         genome = GENOME
-#     shell:
-#         "freebayes -f {GENOME} -p 1 -C10 {input[0]} > {output} "
+# NR for total number of rows for all files in {input.csv}
+# FNR for number of rows for each file in {input.csv}
 
+rule typeVariants:
+    conda: 
+        "envs/illumina/environment.yml",
 
-# rule bgzip:
-#     input:
-#         "{sample}.vcf"
-#     output:
-#         "{sample}.vcf.gz"
-#     shell:
-#         "bgzip {input} ;  tabix -p vcf {output}"
+    input:
+        genome=GENOME,
+        variants=OUT_DIR +"/variants/{sample}.variants.tsv",
+        gff=config['gff'],
+        yaml=config['typing_yaml'],
 
+    output:
+        variants=OUT_DIR + "/typing/{sample}.variants.csv",
+        typing=OUT_DIR + "/typing/{sample}.typing.csv",
+        csq=OUT_DIR + "/typing/{sample}.csq.vcf"
 
-# rule merge_vcf:
-#     input: 
-#         [f'{sample}.vcf.gz' for sample in SAMPLES]
-#     output:
-#         "final.vcf.gz"
-#     shell:
-#         "bcftools merge {input} -Oz -o {output}"
+    params:
+        csqDpThreshold=config['csqDpThreshold'],
+        csqAfThreshold=config['csqAfThreshold'],
+        seq_type='-t' if config['illumina'] else '-v'
 
-# rule merge_annotation:
-#     input:
-#         "final.vcf.gz"
-#     output:
-#         "final.ann.vcf"
-#     log:
-#         "final.snpeff.log"
-#     shell:
-#         "snpEff -Xmx10G -v {GENOME_NAME} {input}> {output} 2> {log}"
-
-# rule single_annotation:
-#     input:
-#         "{sample}.vcf.gz"
-#     output:
-#         "{sample}.ann.vcf"
-#     log:
-#         "{sample}.snpeff.log"
-#     shell:
-#         "snpEff -Xmx10G -v {GENOME_NAME} {input}> {output} 2> {log}"
+    shell:
+        """
+        ./bin/type_vcf.py \
+        -i {wildcards.sample} \
+        -y {input.yaml} \
+        -ov {output.csq} \
+        -ot {output.typing} \
+        -os {output.variants} \
+        -dp {params.csqDpThreshold} \
+        -af {params.csqAfThreshold} \
+        {params.seq_type} {input.variants} \
+        {input.gff} {input.genome}
+        """
 
 
-# rule ann_to_csv:
-#     input:
-#         "{sample}.ann.vcf"
-#     output:
-#         "{sample}.results.csv"
-#     params:
-#         qual = config["VCF_QUAL_FILTER"]
-#     shell:
-#         """
-#         SnpSift filter 'QUAL > {params.qual}' {input} |
-#         ./scripts/vcfEffOnePerLine.pl|
-#         SnpSift extractFields - 'ANN[*].GENE' 'ANN[*].FEATUREID' 'POS' 'REF' 'ALT' 'ANN[*].HGVS_C' 'ANN[*].HGVS_P' 'ANN[*].IMPACT' 'ANN[*].EFFECT' > {output}
-#         """
+rule mergeTypingCSVs:
+    conda: 
+        "envs/illumina/environment.yml",
 
+    input:
+        variants=expand("{out_dir}/typing/{sample}.variants.csv",sample=SAMPLES, out_dir=[OUT_DIR]),
+        typing=expand("{out_dir}/typing/{sample}.typing.csv",sample=SAMPLES, out_dir=[OUT_DIR]),
 
+    output:
+        typing=OUT_DIR + "/typing_summary.csv",
+        variants=OUT_DIR + "/variant_summary.csv"
 
-# rule consensus:
-#     input:
-#         "{sample}.vcf.gz"
-#     output:
-#         report("{sample}.fa",caption="report/sample.rst",category="sample")
-#     params:
-#         genome = GENOME
-#     log:
-#         "{sample}.consensus.log"
-#     shell:
-#         "bcftools consensus {input} -f {params.genome} --sample {wildcards.sample} > {output} 2> {log}"
-
-
-# rule pangolin:
-#     input:
-#         "{sample}.fa"
-#     output:
-#         "{sample}.lineage_report.csv"
-#     shell:
-#         "pangolin {input} --outfile {output}"
-
-
-
+    shell:
+        """
+        awk '(NR == 1) || (FNR > 1)' {input.variants} > {output.variants}
+        awk '(NR == 1) || (FNR > 1)' {input.typing} > {output.typing}
+        """
