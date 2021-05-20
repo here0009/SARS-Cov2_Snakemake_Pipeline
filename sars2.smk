@@ -11,13 +11,7 @@ import os
 
 def get_final_output():
     final_output = []
-    final_output.extend(expand("{out_dir}/qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2], out_dir=[OUT_DIR])),
-    # final_output.extend(expand("{out_dir}/variants/{sample}.variants.tsv", sample=SAMPLES, out_dir=[OUT_DIR])),
     final_output.extend(expand(OUT_DIR+"/annotation/{sample}_anno.csv", sample=SAMPLES)),
-    # final_output.extend(expand("{out_dir}/qc/qc_plots/{sample}.depth.png", sample=SAMPLES,out_dir=[OUT_DIR]))
-
-    # final_output.extend()
-    
     
 
     return final_output
@@ -45,7 +39,8 @@ rule root:
         OUT_DIR + "/qc/quast/report.txt",
         OUT_DIR +"/qc/qc_plots/total_qc.csv",
         OUT_DIR + "/typing_summary.csv",
-        OUT_DIR + "/variant_summary.csv"
+        OUT_DIR + "/variant_summary.csv",
+        OUT_DIR +'/multiqc_report.html'
 
 
 rule fastqc:
@@ -57,8 +52,6 @@ rule fastqc:
     output:
         html1=OUT_DIR + "/qc/fastqc/{sample}_1_fastqc.html",
         html2=OUT_DIR +"/qc/fastqc/{sample}_2_fastqc.html",
-    log:
-        OUT_DIR +"/logs/fastqc/{sample}.log",
     params:
         out_dir=OUT_DIR + "/qc/fastqc/",
     shell:
@@ -146,7 +139,7 @@ rule trimPrimerSequences:
         ptrim=OUT_DIR +"/mapped/{sample}.primertrimmed.sorted.bam",
 
     log:
-        "logs/primer_trime/{sample}_trimPrimerSequences.log",
+        OUT_DIR +"/mapped/{sample}_trimPrimerSequences.log",
 
     params:
         ivarCmd = "ivar trim -e" if config["allowNoprimer"] else "ivar trim",
@@ -323,3 +316,22 @@ rule mergeTypingCSVs:
         awk '(NR == 1) || (FNR > 1)' {input.variants} > {output.variants}
         awk '(NR == 1) || (FNR > 1)' {input.typing} > {output.typing}
         """
+
+
+rule multiQC:
+    conda: 
+        "envs/illumina/environment.yml",
+    
+    input:
+        fastqc=expand("{out_dir}/qc/fastqc/{sample}_{pair}_fastqc.html", sample=SAMPLES, pair=[1,2], out_dir=[OUT_DIR]),
+        mapped=expand("{out_dir}/mapped/{sample}_trimPrimerSequences.log", sample=SAMPLES, out_dir=OUT_DIR),
+        quast=OUT_DIR + "/qc/quast/report.txt"
+    
+    output:
+         OUT_DIR +'/multiqc_report.html'
+
+    log:
+        OUT_DIR + "/logs/multiqc.log"
+     
+    script:
+        "bin/multiqc_wrapper.py"
